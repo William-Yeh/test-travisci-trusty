@@ -1,0 +1,51 @@
+dist: trusty
+sudo: required
+
+language: go
+go:
+  - "1.14.x"
+
+addons:
+  postgresql: "10"
+  apt:
+    packages:
+      - postgresql-10
+      - postgresql-client-10
+env:
+  global:
+    - PGPORT=5433
+
+services:
+  - postgresql
+  - cassandra
+  - rabbitmq
+
+before_install:
+  - echo "==> Configuring postgres..."
+  - sudo sed -i -e '/local.*peer/s/postgres/all/' -e 's/peer\|md5/trust/g' /etc/postgresql/*/main/pg_hba.conf
+  - sudo service postgresql restart
+  - while ! nc -z localhost $PGPORT; do sleep 0.1; done
+
+install:
+  - echo "==> Installing RabbitMQ tools (under Travis CI)..."
+  - wget http://localhost:15672/cli/rabbitmqadmin
+  - chmod +x rabbitmqadmin
+  - sudo mv rabbitmqadmin /usr/sbin/
+
+  - echo "==> Installing tools..."
+  - go get github.com/fullstorydev/grpcurl/cmd/grpcurl
+
+before_script:
+  - echo "==> Configuring Postgres..."
+  - psql -c 'create database test_travisci;' -U postgres
+
+  - echo "==> Configuring Cassandra..."
+  - "cqlsh -e \"CREATE KEYSPACE test_travisci WITH REPLICATION = { 'class': 'NetworkTopologyStrategy', 'datacenter1': 1 };\""
+
+  - echo "==> Configuring RabbitMQ..."
+  - sudo rabbitmqctl add_vhost test_travisci
+  - sudo rabbitmqctl set_permissions -p test_travisci guest ".*" ".*" ".*"
+  - sudo rabbitmqadmin declare queue -V test_travisci name=test_queue
+
+script:
+  - grpcurl -help
